@@ -1,0 +1,7 @@
+site_name: "Azure VM Terraform Project"
+nav:
+  - Home: index.md
+  - Environment Setup:
+      - Dev: environments/dev.tfvars
+      - Prod: environments/prod.tfvars
+  - Module Documentation: modules/vm/README.md
