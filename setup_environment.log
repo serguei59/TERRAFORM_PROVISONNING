@@ -1,0 +1,29 @@
+Azure CLI login verified
+GitHub CLI is installed
+🛠️ Creating Resource Groups...
+🛠️ Creating Resource Group: TERRAFORM (RG_SBUASA)
+{
+  "id": "/subscriptions/372a87c2-98e3-4834-ba6f-16b1e0d9e5e2/resourceGroups/RG_SBUASA",
+  "location": "francecentral",
+  "managedBy": null,
+  "name": "RG_SBUASA",
+  "properties": {
+    "provisioningState": "Succeeded"
+  },
+  "tags": null,
+  "type": "Microsoft.Resources/resourceGroups"
+}
+✅ Resource Group RG_SBUASA created successfully.
+🛠️ Creating Resource Group: SECURITY (RG_Security_SBUASA)
+{
+  "id": "/subscriptions/372a87c2-98e3-4834-ba6f-16b1e0d9e5e2/resourceGroups/RG_Security_SBUASA",
+  "location": "francecentral",
+  "managedBy": null,
+  "name": "RG_Security_SBUASA",
+  "properties": {
+    "provisioningState": "Succeeded"
+  },
+  "tags": null,
+  "type": "Microsoft.Resources/resourceGroups"
+}
+✅ Resource Group RG_Security_SBUASA created successfully.
