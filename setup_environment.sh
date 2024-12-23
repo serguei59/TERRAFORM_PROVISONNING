@@ -48,11 +48,46 @@ declare -A RESOURCE_GROUPS=(
 
 for key in "${!RESOURCE_GROUPS[@]}"; do
     rg=${RESOURCE_GROUPS[$key]}
-    echo "🛠️ Creating Resource Group: $key ($rg)"
-    if az group create --name "$rg" --location "$LOCATION"; then
-        echo "✅ Resource Group $rg created successfully."
+    if az group show --name "$rg" &>/dev/null; then
+        echo "✅ Resource Group $rg already exists. Skipping creation."
     else
-        echo "❌ Failed to create Resource Group $rg."
+        echo "🛠️ Creating Resource Group: $key ($rg)"
+        if az group create --name "$rg" --location "$LOCATION"; then
+            echo "✅ Resource Group $rg created successfully."
+        else
+            echo "❌ Failed to create Resource Group $rg."
+            exit 1
+        fi
+    fi    
+done
+
+#------------------------------------------
+# Create Key Vault
+#------------------------------------------
+# Check and handle Deleted Key Vault
+echo "Checking for existing deleted Key Vault..."
+DELETED_KEYVAULT=$(az keyvault list-deleted --query "[?name=='$KEYVAULT_NAME']" -o tsv)
+
+if [ -n "$DELETED_KEYVAULT" ]; then
+    echo "Key Vault $KEYVAULT_NAME exists in deleted state. Attempting to purge..."
+    if az keyvault purge --name "$KEYVAULT_NAME"; then
+        echo "Key Vault $KEYVAULT_NAME purged successfully."
+    else
+        echo "Failed to purge Key Vault $KEYVAULT_NAME."
         exit 1
     fi
-done
+fi
+# Create Key Vault (if not exists)
+if az keyvault show --name "$KEYVAULT_NAME" --resource-group "$RESOURCE_GROUP_SECURITY" &>/dev/null; then
+    echo "✅ Key Vault $KEYVAULT_NAME already exists. Skipping creation."
+else
+    echo "Creating Key Vault : $KEYVAULT_NAME"
+    if az keyvault create --name "$KEYVAULT_NAME" --resource-group "$RESOURCE_GROUP_SECURITY" --location "$LOCATION" \
+        --enable-rbac-authorization false; then
+        echo "Key Vault $KEYVAULT_NAME created successfully."
+    else
+        echo "Failed to create Key Vault $KEYVAULT_NAME."
+        exit 1
+    fi
+fi
+
