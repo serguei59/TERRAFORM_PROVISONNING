@@ -83,11 +83,166 @@ if az keyvault show --name "$KEYVAULT_NAME" --resource-group "$RESOURCE_GROUP_SE
 else
     echo "Creating Key Vault : $KEYVAULT_NAME"
     if az keyvault create --name "$KEYVAULT_NAME" --resource-group "$RESOURCE_GROUP_SECURITY" --location "$LOCATION" \
-        --enable-rbac-authorization false; then
+        --enable-rbac-authorization true; then
         echo "Key Vault $KEYVAULT_NAME created successfully."
     else
         echo "Failed to create Key Vault $KEYVAULT_NAME."
         exit 1
     fi
 fi
+#------------------------------------------
+# Clean Up old Service Principals
+#-------------------------------------------
+OLD_SP_LIST=$(az ad sp list --query "[?contains(displayName, 'sp-kv-access-sbuasa')].{AppId:appId}" -o tsv
+)
+if [[ -n "$OLD_SP_LIST" ]]; then
+    echo "Found old Service Principals. Deleting..."
+    for SP_ID in $OLD_SP_LIST; do
+        echo "Deleting Service principal with AppId: $SP_ID"
+        if az ad sp delete --id "$SP_ID"; then
+            echo "Service Principal with appId: $SP_ID deleted successfully."
+        else
+            echo "Failed to delete Service Principal with appId: $SP_ID. Skipping..."
+        fi
+    done
+    echo "Old Service Principals deleted successfully."
+else
+    echo "No old Service Principals found."
+fi 
 
+#------------------------------------------
+# Clean Up old App Registrations
+#-------------------------------------------
+OLD_APP_LIST=$(az ad app list --query "[?contains(displayName, 'sp-kv-access-sbuasa')].{AppId:appId}" -o tsv
+)
+if [[ -n "$OLD_APP_LIST" ]]; then
+    echo "Found old App Registrations. Deleting..."
+    for APP_ID in $OLD_APP_LIST; do
+        echo "Deleting App Registration with AppId: $APP_ID"
+        if az ad app delete --id "$APP_ID"; then
+            echo "App Registrations with AppId: $APP_ID deleted successfully."
+        else
+            echo "Failed to delete App Registration with AppId: $APP_ID. Skipping..."
+        fi
+    done
+    echo "Old App Registrations deleted successfully."
+else
+    echo "No old App Registrations found."
+fi 
+
+#----------------------------------------------------------------------------
+# Create Service Principal SP_KV_NAME for Key Vault Secrets access
+#----------------------------------------------------------------------------
+# Generate dynamic Service Principal name
+SP_KV_NAME="${SP_KV_NAME_PREFIX}-$(date +%Y%m%d%H%M%S)"
+echo "🔑 Using Service Principal Name: $SP_KV_NAME"
+
+
+# Creating new Service Principal
+APP_ID=$(az ad sp list --display-name "$SP_KV_NAME" --query "[0].appId" -o tsv)
+
+if [ -n "$APP_ID" ]; then
+    echo "Service Principal $SP_KV_NAME already exists."
+    echo "Checking if it has the correct roles and permissions..."
+
+    # Check if Service Principal has Key Vault Secrets User role
+    ROLES=$(az role assignment list --assignee "$APP_ID" --query "[].roleDefinitionName" -o tsv)
+
+    if [[ "$ROLES" == *"Key Vault Secrets User"* ]]; then
+        echo "Service Principal $SP_KV_NAME has Key Vault Secrets User role. Skipping recreation."
+    else
+        echo "Service Principal $SP_KV_NAME does not have correct role. Deleting and recreating ..."
+        if az ad sp delete --id "$APP_ID"; then
+            echo "Service Principal $SP_KV_NAME deleted successfully."
+            echo "Waiting 30 seconds to ensure Azure propagates the deletion..."
+            sleep 30
+        else
+            echo "Failed to delete Service Principal $SP_KV_NAME."
+            exit 1
+        fi
+    fi
+fi
+
+# Create Service Principal
+echo "Creating Service Principal: $SP_KV_NAME..."
+SP_OUTPUT=$(az ad sp create-for-rbac \
+    --name "$SP_KV_NAME" \
+    --query "{appId: appId, password: password}" -o json)
+    
+# Validate SP_OUTPUT
+if [[ -z "$SP_OUTPUT" ]]; then
+    echo "Failed to create Service Principal."
+    exit 1
+fi
+# Extract  ClientId and ClientSecret using jq
+SP_CLIENT_ID=$(echo "$SP_OUTPUT" | jq -r '.appId')
+SP_CLIENT_SECRET=$(echo "$SP_OUTPUT" | jq -r '.password')
+
+if [[ -z "$SP_CLIENT_ID" || -z "$SP_CLIENT_SECRET" ]]; then
+    echo "Failed to extract ClientId and ClientSecret from Service Principal creation output"
+    echo "SP_OUTPUT content: $SP_OUTPUT"
+    exit 1
+fi
+echo "Service Principal created: $SP_KV_NAME"
+echo "SP_CLIENT_ID: $SP_CLIENT_ID"
+echo "SP_CLIENT_SECRET: $SP_CLIENT_SECRET"
+
+# Customize Service Principal: Add Contributor role and Reduce Key Vault's scope
+echo "Adding Key Vault Secrets User role and Reducing Service Principal's scope to the specific Key Vault."
+az role assignment create \
+    --assignee "$SP_CLIENT_ID" \
+    --role "Key Vault Secrets User" \
+    --scope "$(az keyvault show --name "$KEYVAULT_NAME" --query id -o tsv)" || {
+    echo "Failed to assign Key Vault Secrets User role and reduce scope."
+    exit 1
+}
+echo " Key Vault Secrets User role added and Scope reduced to Key Vault successfully"
+
+#-------------
+#Configuration
+#-------------
+
+# Store SubscriptionId & TenantId in Key Vault
+echo "Storing secrets in Key Vault..."
+SUBSCRIPTION_ID=$(az account show --query "id" -o tsv)
+TENANT_ID=$(az account show --query "tenantId" -o tsv)
+
+echo "Storing SubscriptionId in Key Vault..."
+if az keyvault secret set --vault-name "$KEYVAULT_NAME" --name "SubscriptionId" --value "$SUBSCRIPTION_ID"; then
+    echo "Secret 'SubscriptionID' stored successfully."
+else
+    echo "Failed to store 'SubscriptionId."
+    exit 1
+fi
+
+echo "Storing TenantId in Key Vault..."
+if az keyvault secret set --vault-name "$KEYVAULT_NAME" --name "TenantId" --value "$TENANT_ID"; then
+    echo "Secret 'TenantId' stored successfully."
+else
+    echo "Failed to store 'TenantId'."
+    exit 1
+fi
+
+# Store SP ClientSecret in Key Vault
+echo "Storing Service Principal ClientSecret in Key Vault..."
+if az keyvault secret set --vault-name "$KEYVAULT_NAME" --name "SP-ClientSecret" --value "$SP_CLIENT_SECRET"; then
+    echo "Secret 'SP-ClientSecret' stored successfully."
+else
+    echo "Failed to store 'SP-ClientSecret'."
+    exit 1
+fi
+
+# Add Service Principal ID to GitHub Secrets
+echo "Adding Service Principal ClientId to GitHub Secrets..."
+if /usr/bin/gh secret set ARM_CLIENT_ID --repo "$GITHUB_REPO" -b "$SP_CLIENT_ID"; then
+    echo " Added 'SP-ClientId successfully to GitHub Secrets."
+else
+    echo "Failed to add 'SP-ClientId'."
+    exit 1
+fi
+
+#----------------------------------------------------------------------------
+# Clean Up Sensitive Variables
+#----------------------------------------------------------------------------
+unset SP_CLIENT_SECRET
+echo "Sensitive variables cleared from memory"
