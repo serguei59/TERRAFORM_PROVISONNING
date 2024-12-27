@@ -41,3 +41,4 @@ setup_environment.log
 
 # poetry
 poetry.lock
+.venv/
