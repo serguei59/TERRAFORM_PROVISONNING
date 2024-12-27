@@ -241,8 +241,28 @@ else
     exit 1
 fi
 
-#----------------------------------------------------------------------------
-# Clean Up Sensitive Variables
-#----------------------------------------------------------------------------
+# Add Tenant ID to GitHub Secrets
+echo "Adding Service Principal TenantId to GitHub Secrets..."
+if /usr/bin/gh secret set ARM_TENANT_ID --repo "$GITHUB_REPO" -b "$TENANT_ID"; then
+    echo " Added 'TenantId successfully to GitHub Secrets."
+else
+    echo "Failed to add 'TenantId'."
+    exit 1
+fi
+
+#------------------------------------------
+# 🧹 Clean Sensitive Variables from Memory
+#------------------------------------------
+
+unset SP_CLIENT_ID
 unset SP_CLIENT_SECRET
-echo "Sensitive variables cleared from memory"
+unset SUBSCRIPTION_ID
+unset TENANT_ID
+unset KEYVAULT_NAME
+unset RESOURCE_GROUP_SECURITY
+unset RESOURCE_GROUP_TERRAFORM
+unset SP_OUTPUT
+unset APP_ID
+unset DELETED_KEYVAULT
+
+echo "🧹 Sensitive variables have been cleared from memory."
