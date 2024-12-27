@@ -38,3 +38,6 @@ override.tf.json
 .terraformrc
 terraform.rc
 setup_environment.log
+
+# poetry
+poetry.lock

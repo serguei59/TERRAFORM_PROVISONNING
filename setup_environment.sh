@@ -19,7 +19,7 @@ fi
 
 # enable logging
 LOG_FILE="$(cd "$(dirname "$0")" && pwd)/setup_environment.log"
-exec > >(tee -i $"$LOG_FILE")
+exec > >(tee -i $"$LOG_FILE") 2> >(grep -v 'password' >&2)
 
 # Verify Azure CLI Login
 if ! az account show &>/dev/null; then
