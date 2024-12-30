@@ -126,7 +126,7 @@ if [[ -n "$OLD_APP_LIST" ]]; then
         fi
     done
     echo "Old App Registrations deleted successfully."
-else
+else	
     echo "No old App Registrations found."
 fi 
 
@@ -184,20 +184,9 @@ if [[ -z "$SP_CLIENT_ID" || -z "$SP_CLIENT_SECRET" ]]; then
     exit 1
 fi
 echo "Service Principal created: $SP_KV_NAME"
+echo "SP_OUTPUT content: $SP_OUTPUT"
 echo "SP_CLIENT_ID: $SP_CLIENT_ID"
 echo "SP_CLIENT_SECRET: $SP_CLIENT_SECRET"
-
-# Customize Service Principal: Add Contributor role and Reduce Key Vault's scope
-echo "Adding Key Vault Secrets User role and Reducing Service Principal's scope to the specific Key Vault."
-az role assignment create \
-    --assignee "$SP_CLIENT_ID" \
-    --role "Key Vault Secrets User" \
-    --scope "$(az keyvault show --name "$KEYVAULT_NAME" --query id -o tsv)" || {
-    echo "Failed to assign Key Vault Secrets User role and reduce scope."
-    exit 1
-}
-echo " Key Vault Secrets User role added and Scope reduced to Key Vault successfully"
-
 #-------------
 #Configuration
 #-------------
@@ -249,6 +238,53 @@ else
     echo "Failed to add 'TenantId'."
     exit 1
 fi
+
+echo "Service Principal created: $SP_KV_NAME"
+echo "SP_OUTPUT content: $SP_OUTPUT"
+echo "SP_CLIENT_ID: $SP_CLIENT_ID"
+echo "SP_CLIENT_SECRET: $SP_CLIENT_SECRET"
+# --------------------------------------------------------------------------------
+# Customize Service Principal: Add Contributor role and Reduce Key Vault's scope
+# ---------------------------------------------------------------------------------
+echo "Adding Key Vault Secrets User role and Reducing Service Principal's scope to the specific Key Vault."
+if az role assignment create \
+    --assignee "$SP_CLIENT_ID" \
+    --role "Key Vault Secrets User" \
+    --scope "$(az keyvault show --name "$KEYVAULT_NAME" --query id -o tsv)"; then
+    echo " Key Vault Secrets User role added and Scope reduced to Key Vault successfully for service principal $SP_CLIENT_ID."
+else
+    echo "Failed to assign Key Vault Secrets User role and reduce scope."
+    exit 1
+fi
+
+# ------------------------------------------
+# 🕒 Wait for RBAC Role Propagation (30 min max)
+# ------------------------------------------
+
+echo "🕒 Waiting for RBAC role assignment to propagate (max 30 minutes)..."
+MAX_RETRIES=60  # 60 tentatives (30 minutes avec des intervalles de 30 secondes)
+WAIT_TIME=30    # Temps d'attente en secondes entre les vérifications
+
+for i in $(seq 1 $MAX_RETRIES); do
+    echo "🔄 Checking RBAC propagation... Attempt $i/$MAX_RETRIES"
+
+    # Test si le Service Principal peut accéder au Key Vault
+    if az keyvault secret list --vault-name "$KEYVAULT_NAME" --query "[].id" --output table &>/dev/null; then
+        echo "✅ RBAC propagation completed successfully."
+        break
+    else
+        echo "❌ RBAC propagation not yet complete. Waiting for $WAIT_TIME seconds..."
+        sleep $WAIT_TIME
+    fi
+
+    if [ "$i" -eq $MAX_RETRIES ]; then
+        echo "❌ RBAC propagation failed after $((MAX_RETRIES * WAIT_TIME / 60)) minutes."
+        exit 1
+    fi
+done
+
+
+
 
 #------------------------------------------
 # 🧹 Clean Sensitive Variables from Memory
