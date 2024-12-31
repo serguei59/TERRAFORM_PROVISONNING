@@ -129,7 +129,42 @@ if [[ -n "$OLD_APP_LIST" ]]; then
 else	
     echo "No old App Registrations found."
 fi 
+#------------------------------
+#Assign Temporary Roles to User
+#------------------------------
+echo " Assigning temporary 'Key Vault Administrator' role to current user..."
+CURRENT_USER=$(az account show --query user.name -o tsv)
+USER_UPN=$(az ad signed-in-user show --query userPrincipalName -o tsv
+)
 
+if [[ -z "$USER_UPN" ]]; then
+    echo "❌ Failed to retrieve User PrincipalName. Exiting..."
+    exit 1
+fi
+
+echo "Assigning temporary 'Key Vault Administrator' role to user..."
+if az role assignment create \
+    --assignee "$USER_UPN" \
+    --role "Key Vault Administrator" \
+    --scope "$(az keyvault show --name "$KEYVAULT_NAME" --query id -o tsv)"; then
+    echo "Temporary 'Key Vault Administrator' role assigned to $CURRENT_USER."
+else
+    echo "Failed to assign 'Key Vault Administrator' role to $CURRENT_USER."
+    exit 1
+fi
+
+echo " Assigning temporary 'User Access Administrator' role to current user..."
+CURRENT_USER=$(az account show --query user.name -o tsv)
+
+if az role assignment create \
+    --assignee "$USER_UPN" \
+    --role "User Access Administrator" \
+    --scope "$(az keyvault show --name "$KEYVAULT_NAME" --query id -o tsv)"; then
+    echo "Temporary 'User Access Administrator' role assigned to $CURRENT_USER."
+else
+    echo "Failed to assign 'User Access Administrator' role to $CURRENT_USER."
+    exit 1
+fi
 #----------------------------------------------------------------------------
 # Create Service Principal SP_KV_NAME for Key Vault Secrets access
 #----------------------------------------------------------------------------
@@ -283,8 +318,28 @@ for i in $(seq 1 $MAX_RETRIES); do
     fi
 done
 
+#----------------------------------
+# Remove Temporary Roles from User
+#----------------------------------
+echo "Removing temporary roles from $CURRENT_USER..."
 
+if az role assignment delete \
+    --assignee "$USER_UPN" \
+    --role "Key Vault Administrator" \
+    --scope "$(az keyvault show --name "$KEYVAULT_NAME" --query id -o tsv)"; then
+    echo "Key Vault Administrator role removed successfully from $CURRENT_USER."
+else
+    echo "Failed to remove Key Vault Administrator role from $CURRENT_USER."
+fi
 
+if az role assignment delete \
+    --assignee "$USER_UPN" \
+    --role "User Access Administrator" \
+    --scope "$(az keyvault show --name "$KEYVAULT_NAME" --query id -o tsv)"; then
+    echo "User Access Administrator role removed successfully from $CURRENT_USER."
+else
+    echo "Failed to remove User Access Administrator role from $CURRENT_USER."
+fi
 
 #------------------------------------------
 # 🧹 Clean Sensitive Variables from Memory
@@ -300,5 +355,17 @@ unset RESOURCE_GROUP_TERRAFORM
 unset SP_OUTPUT
 unset APP_ID
 unset DELETED_KEYVAULT
+unset OLD_SP_LIST
+unset OLD_APP_LIST
+unset CURRENT_USER
+unset SP_KV_NAME
+unset SP_KV_NAME_PREFIX
+unset LOCATION
+unset GITHUB_REPO
+unset LOG_FILE
+unset USER_UPN
+unset ENV_FILE
+unset 
+
 
 echo "🧹 Sensitive variables have been cleared from memory."
